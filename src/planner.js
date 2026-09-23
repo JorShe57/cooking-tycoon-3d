@@ -141,14 +141,17 @@ export function createPlanner({ getSave, onOpen, onKitchen, onVenueChange, toast
     const on = new Map(save.menu.map((m) => [m.id, m]));
     const known = RECIPE_LIST.filter((r) => save.known.includes(r.id));
     const unknown = RECIPE_LIST.filter((r) => !save.known.includes(r.id));
+    const full = save.menu.length >= slots;
+    const offMenu = known.filter((r) => !on.has(r.id));
     return `<div class="muted" style="margin-bottom:8px">Menu ${save.menu.length}/${slots} dishes. Bargain prices bring more (and more patient) customers; Premium earns more per plate.</div>
+      ${full && offMenu.length ? `<div class="warn-box">📋 Your menu board is full (${slots}/${slots}). Remove a dish to make room, or buy a <b>Bigger Menu Board</b> in <button class="btn small" data-goto="shop">🛒 Shop</button></div>` : ''}
       ${known.map((r) => {
         const m = on.get(r.id);
         const needs = recipeNeeds(r).stations.filter((s) => s !== 'plate').map((s) => STATIONS[s].emoji).join('');
         return `<div class="card"><div class="row"><div style="font-size:26px">${r.emoji}</div><div class="grow">
           <div class="name">${r.name} ${r.veg ? '🌱' : ''}</div>
           <div class="desc">${r.parts.map(howToText).join(' + ')} · needs ${needs || '—'}</div></div>
-          <button class="buy ${m ? 'red' : ''}" data-menu="${r.id}">${m ? 'Remove' : 'Add'}</button></div>
+          <button class="buy ${m ? 'red' : ''}" data-menu="${r.id}">${m ? 'Remove' : full ? 'Full' : 'Add'}</button></div>
           ${m ? `<div class="seg">${Object.entries(PRICE_TIERS).map(([id, t]) => `<button data-tier="${r.id}:${id}" class="${m.tier === id ? 'on' : ''}">${t.name} ${money(Math.round(r.price * t.mult))}</button>`).join('')}</div>` : ''}
         </div>`;
       }).join('')}
@@ -259,6 +262,13 @@ export function createPlanner({ getSave, onOpen, onKitchen, onVenueChange, toast
   });
 
   $('plan-body').addEventListener('click', (e) => {
+    const link = e.target.closest('[data-goto]');
+    if (link) {
+      tab = link.dataset.goto;
+      sfx('tap');
+      render();
+      return;
+    }
     const el = e.target.closest('[data-event],[data-marketing],[data-venue],[data-menu],[data-tier],[data-learn],[data-stock],[data-sell],[data-autostock],[data-station],[data-upgrade],[data-truck],[data-hire]');
     if (!el || el.disabled) return;
     const d = el.dataset;
@@ -274,7 +284,11 @@ export function createPlanner({ getSave, onOpen, onKitchen, onVenueChange, toast
     } else if (d.menu) act(actions.toggleMenu, d.menu);
     else if (d.tier) act(actions.setTier, ...d.tier.split(':'));
     else if (d.learn) {
-      if (act(actions.learnRecipe, d.learn)) onVenueChange();
+      if (act(actions.learnRecipe, d.learn)) {
+        onVenueChange();
+        const r = RECIPES[d.learn];
+        if (!getSave().menu.some((m) => m.id === r.id)) toast(`Learned ${r.emoji} ${r.name}! Menu is full — remove a dish or buy a Bigger Menu Board to add it.`, 'warn');
+      }
     } else if (d.stock) {
       const [k, n] = d.stock.split(':');
       act(actions.buyStock, k, Number(n));
