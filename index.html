@@ -1,0 +1,89 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no, viewport-fit=cover" />
+    <meta name="theme-color" content="#2b2135" />
+    <meta name="apple-mobile-web-app-capable" content="yes" />
+    <meta name="mobile-web-app-capable" content="yes" />
+    <title>Cooking Tycoon 3D</title>
+    <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>🍳</text></svg>" />
+    <link rel="stylesheet" href="/src/style.css" />
+  </head>
+  <body>
+    <canvas id="game"></canvas>
+
+    <div id="labels"></div>
+    <div id="popups"></div>
+
+    <div id="hud" class="hidden">
+      <div class="topbar">
+        <div class="stat" id="hud-day">Day 1</div>
+        <div class="stat" id="hud-time">1:00</div>
+        <div class="stat money" id="hud-money">$0</div>
+        <div class="stat" id="hud-rating">★ 3.0</div>
+      </div>
+      <div class="subbar">
+        <div id="hud-goal" class="chip"></div>
+        <div id="hud-bonus" class="chip"></div>
+      </div>
+      <div id="tickets"></div>
+      <div id="tutorial" class="hidden"></div>
+      <div class="bottombar">
+        <button id="btn-pause" class="icon-btn" aria-label="Pause">⏸</button>
+        <div id="hand">Hands empty</div>
+        <button id="btn-book" class="icon-btn" aria-label="Recipe book">📖</button>
+      </div>
+    </div>
+
+    <div id="screen-menu" class="screen">
+      <div class="panel">
+        <div class="logo">🍳</div>
+        <h1>Cooking Tycoon 3D</h1>
+        <p class="sub">Grow a tiny kitchen into a busy restaurant.</p>
+        <button id="btn-continue" class="btn primary hidden">Continue</button>
+        <button id="btn-new" class="btn">New Game</button>
+        <button id="btn-howto" class="btn ghost">How to Play</button>
+      </div>
+    </div>
+
+    <div id="screen-between" class="screen hidden">
+      <div class="panel wide">
+        <div id="day-result"></div>
+        <h2>Upgrade Shop <span id="shop-money" class="money"></span></h2>
+        <div id="shop"></div>
+        <div id="next-day"></div>
+        <button id="btn-start" class="btn primary">Start Day</button>
+        <button id="btn-menu" class="btn ghost">Main Menu</button>
+      </div>
+    </div>
+
+    <div id="screen-pause" class="screen hidden">
+      <div class="panel wide">
+        <h2 id="pause-title">Paused</h2>
+        <div id="book"></div>
+        <button id="btn-resume" class="btn primary">Resume</button>
+        <button id="btn-quit" class="btn ghost">Quit to Menu</button>
+      </div>
+    </div>
+
+    <div id="screen-howto" class="screen hidden">
+      <div class="panel wide">
+        <h2>How to Play</h2>
+        <ol class="howto">
+          <li>Customers line up at the <b>pass</b> (back counter) with an order.</li>
+          <li>Tap a <b>crate</b> to grab an ingredient. You can carry one thing at a time.</li>
+          <li>Tap a <b>cutting board</b> to drop lettuce/tomato, then tap again to chop 🔪.</li>
+          <li>Put bread, patties or diced tomato on a <b>burner</b> 🔥. Grab it when it dings — before it burns!</li>
+          <li>Tap a <b>plate</b> to add food. Tap it with empty hands to pick the plate up.</li>
+          <li>Tap the <b>pass</b> to serve. Faster service = bigger tips.</li>
+          <li>Mistakes go in the <b>trash</b> 🗑️ (−$2).</li>
+          <li>Between days, spend cash on upgrades. Finish 10 career days!</li>
+        </ol>
+        <button id="btn-howto-close" class="btn primary">Got it</button>
+      </div>
+    </div>
+
+    <script type="module" src="/src/main.js"></script>
+  </body>
+</html>
