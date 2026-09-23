@@ -1,43 +1,25 @@
 import { KitchenScene } from './scene.js';
-import { Game, newSave, loadSave, writeSave, matchRecipe } from './game.js';
+import { Game, newSave, loadSave, writeSave, matchDish, vstate, ensureCrates } from './game.js';
 import {
-  ITEMS, RECIPES, RECIPE_LIST, CUSTOMERS, UPGRADES, HOW_TO, CAREER_DAYS, BURN_WINDOW, dayConfig, dayNews,
+  ITEMS, RECIPES, RECIPE_LIST, CUSTOMERS, VENUES, EVENTS, CAREER_DAYS, BURN_WINDOW, howToText,
+  SPICY_DAY, DISHES_DAY, VEGGIE_DAY,
 } from './data.js';
 import { sfx, unlockAudio } from './audio.js';
+import { createPlanner } from './planner.js';
+import { createBuilder } from './build.js';
 
 const $ = (id) => document.getElementById(id);
 const scene = new KitchenScene($('game'));
 
 let save = loadSave();
 let game = null;
-let mode = 'menu'; // menu | playing | paused | between
-
-// ---------- events from the game ----------
-
-function onGameEvent(type, p) {
-  switch (type) {
-    case 'sfx': sfx(p); break;
-    case 'chop': scene.playChop(); break;
-    case 'toast': popAt(p.at ? scene.stationAnchor(p.at) : scene.chef.position.clone().setY(2.2), p.text, p.kind); break;
-    case 'served': {
-      const head = scene.customerHead(p.c.id);
-      popAt(head || scene.stationAnchor('serve'), `+$${p.total}`, 'good');
-      break;
-    }
-    case 'lost': {
-      const head = scene.customerHead(p.c.id);
-      popAt(head || scene.stationAnchor('serve'), 'Left angry!', 'bad');
-      break;
-    }
-    case 'closing': popScreen('Kitchen closing — finish your orders!', 'warn'); break;
-    case 'dayEnd': setTimeout(() => showBetween(p), 700); break;
-  }
-}
+let mode = 'menu'; // menu | playing | paused | plan | build
+let introT = 0;
 
 // ---------- popups ----------
 
 function popAt(v, text, kind = 'info') {
-  if (!v) return;
+  if (!v) return popScreen(text, kind);
   const { x, y } = scene.project(v);
   addPop(x, y, text, kind);
 }
@@ -53,16 +35,45 @@ function addPop(x, y, text, kind) {
   $('popups').appendChild(el);
   setTimeout(() => el.remove(), 1250);
 }
+const toast = (text, kind = 'info') => popScreen(text, kind);
+
+// ---------- events from the game ----------
+
+function onGameEvent(type, p) {
+  switch (type) {
+    case 'sfx': sfx(p); break;
+    case 'chop': scene.playChop(); scene.pulse(p); break;
+    case 'interact': scene.pulse(p); break;
+    case 'staff': scene.staffEvent(p.id); scene.pulse(p.at); break;
+    case 'toast': {
+      const at = p.at ? scene.stationAnchor(p.at) : null;
+      popAt(at || scene.chef.position.clone().setY(2.2), p.text, p.kind);
+      break;
+    }
+    case 'served':
+      popAt(scene.customerHead(p.c.id) || scene.stationAnchor('serve'), `+$${p.total}`, 'good');
+      break;
+    case 'lost':
+      popAt(scene.customerHead(p.c.id) || scene.stationAnchor('serve'), 'Left angry!', 'bad');
+      break;
+    case 'closing': popScreen('Kitchen closing — finish your orders!', 'warn'); break;
+    case 'dayEnd':
+      setTimeout(() => {
+        sfx('cash');
+        openPlanner('report');
+      }, 900);
+      break;
+  }
+}
 
 // ---------- input ----------
 
 $('game').addEventListener('pointerdown', (e) => {
   unlockAudio();
+  if (mode === 'build') return builder.onTap(e.clientX, e.clientY);
   if (mode !== 'playing') return;
   const id = scene.pick(e.clientX, e.clientY);
-  if (!id) return;
-  scene.walkTo(id);
-  game.interact(id);
+  if (id) game.queueAction(id);
 });
 
 // ---------- world labels ----------
@@ -94,51 +105,78 @@ const bar = (frac) => {
   const cls = frac < 0.3 ? 'low' : frac < 0.6 ? 'mid' : '';
   return `<div class="bar"><i class="${cls}" style="width:${pct}%"></i></div>`;
 };
+const dishText = (d) => (d ? `${d.recipe.emoji}${d.spicy ? '🌶️' : ''}` : '');
+
+function stationLabel(st) {
+  switch (st.type) {
+    case 'crate': {
+      const n = save.stock[st.ing] || 0;
+      return [n ? 'lbl small' : 'lbl small warnlbl', `${ITEMS[st.ing].emoji} ${n}`, 0.05];
+    }
+    case 'board':
+      if (st.item && ITEMS[st.item].chop) return ['lbl', `Chop${bar(st.progress)}`, 0.55];
+      if (st.item) return ['lbl match', `✓ ${ITEMS[st.item].emoji}`, 0.55];
+      return ['lbl small', '🔪', 0.45];
+    case 'burner':
+    case 'fryer': {
+      const icon = st.type === 'burner' ? '🔥' : '🛢️';
+      if (st.off) return ['lbl off', '⚡ Off', 0.6];
+      if (st.state === 'cooking') return ['lbl', `${icon}${bar(st.t / st.cookTime)}`, 0.6];
+      if (st.state === 'done') return ['lbl ready', `Ready!${bar(1 - st.t / BURN_WINDOW)}`, 0.6];
+      if (st.state === 'burnt') return ['lbl burnt', '☠️ Burnt', 0.6];
+      return ['lbl small', icon, 0.45];
+    }
+    case 'plate': {
+      if (!st.plate) return ['lbl small warnlbl', 'No plate', 0.35];
+      const d = st.plate.contents.length ? matchDish(st.plate.contents) : null;
+      if (d) return ['lbl match', `✓ ${dishText(d)}`, 0.55];
+      if (st.plate.contents.length) return ['lbl', st.plate.contents.map((k) => ITEMS[k].emoji).join(''), 0.55];
+      return ['lbl small', '🍽️', 0.35];
+    }
+    case 'sink':
+      if (st.dirty) return [st.dirty >= 3 ? 'lbl ready' : 'lbl', `🧽 ×${st.dirty}${st.progress ? bar(st.progress) : ''}`, 0.6];
+      return ['lbl small', '🧽', 0.35];
+    case 'trash':
+      return ['lbl small', '🗑️', 0.1];
+  }
+  return null;
+}
 
 function updateLabels() {
   for (const el of labelEls.values()) el.dataset.seen = '';
-  if (game && mode !== 'menu') {
+  if (game && (mode === 'playing' || mode === 'paused')) {
     const up = (v, dy) => v.clone().setY(v.y + dy);
-    for (const item of ['bread', 'lettuce', 'tomato', 'patty']) {
-      const a = scene.stationAnchor(`crate:${item}`);
-      place(label(`crate:${item}`), up(a, 0.1), 'lbl small', `${ITEMS[item].emoji} ${ITEMS[item].name}`);
+    for (const st of game.stations.values()) {
+      const a = scene.stationAnchor(st.id);
+      const l = a && stationLabel(st);
+      if (l) place(label(st.id), up(a, l[2]), l[0], l[1]);
     }
-    game.boards.forEach((b, i) => {
-      const a = scene.stationAnchor(`board:${i}`);
-      let html = '🔪 Board';
-      let cls = 'lbl small';
-      if (b.item && ITEMS[b.item].chop) html = `Tap to chop${bar(b.progress)}`, cls = 'lbl';
-      else if (b.item) html = `✓ ${ITEMS[b.item].name}`, cls = 'lbl match';
-      place(label(`board:${i}`), up(a, 0.55), cls, html);
-    });
-    game.burners.forEach((b, i) => {
-      const a = scene.stationAnchor(`burner:${i}`);
-      let html = '🔥 Stove';
-      let cls = 'lbl small';
-      if (b.state === 'cooking') html = `Cooking${bar(b.t / b.cookTime)}`, cls = 'lbl';
-      else if (b.state === 'done') html = `Ready!${bar(1 - b.t / BURN_WINDOW)}`, cls = 'lbl ready';
-      else if (b.state === 'burnt') html = '☠️ Burnt', cls = 'lbl burnt';
-      place(label(`burner:${i}`), up(a, 0.6), cls, html);
-    });
-    game.plates.forEach((p, i) => {
-      const a = scene.stationAnchor(`plate:${i}`);
-      const r = p.contents.length ? matchRecipe(p.contents) : null;
-      let html = '🍽️';
-      let cls = 'lbl small';
-      if (r) html = `✓ ${r.emoji}`, cls = 'lbl match';
-      else if (p.contents.length) html = p.contents.map((k) => ITEMS[k].emoji).join(' '), cls = 'lbl';
-      place(label(`plate:${i}`), up(a, 0.55), cls, html);
-    });
     place(label('serve'), up(scene.stationAnchor('serve'), 0.35), 'lbl serve', 'SERVE');
-    place(label('trash'), up(scene.stationAnchor('trash'), 0.1), 'lbl small', '🗑️ Trash');
+
+    // Queued taps.
+    const q = [game.chef.current, ...game.chef.queue].filter(Boolean);
+    const seen = new Map();
+    q.forEach((id, i) => {
+      const a = scene.stationAnchor(id);
+      if (!a) return;
+      const k = seen.get(id) || 0;
+      seen.set(id, k + 1);
+      place(label(`q:${id}:${k}`), up(a, 1.05 + k * 0.28), 'qbadge', `${i + 1}`);
+    });
 
     for (const c of game.customers) {
       const head = scene.customerHead(c.id);
       if (!head) continue;
       let html;
       let cls = 'bubble';
-      if (c.state === 'leaving') html = c.happy ? '😋' : '😠', cls = 'bubble mood';
-      else html = `${RECIPES[c.recipe].emoji}${bar(c.patience / c.max)}`;
+      if (c.state === 'leaving') {
+        html = c.happy ? (c.type === 'inspector' ? '📋' : '😋') : '😠';
+        cls = 'bubble mood';
+      } else if (c.type === 'inspector') html = `📋${bar(c.patience / c.max)}`;
+      else {
+        const todo = c.orders.filter((o) => !o.done).map((o) => RECIPES[o.recipe].emoji + (o.spicy ? '🌶️' : '')).join('');
+        html = `${c.veggie ? '🌱' : ''}${c.type === 'influencer' ? '📸' : ''}${todo}${bar(c.patience / c.max)}`;
+      }
       place(label(`c:${c.id}`), head, cls, html);
     }
   }
@@ -153,12 +191,13 @@ function updateLabels() {
 // ---------- HUD ----------
 
 const fmtTime = (t) => `${Math.floor(t / 60)}:${String(Math.floor(t % 60)).padStart(2, '0')}`;
-const steps = (r) => r.parts.map((k) => HOW_TO[k].join('')).join(' + ');
+const steps = (r) => r.parts.map(howToText).join(' + ');
 const handText = (h) => {
   if (!h) return 'Hands empty';
   if (h.kind === 'plate') {
-    const r = matchRecipe(h.contents);
-    return r ? `Plate: ${r.emoji} ${r.name}` : `Plate: ${h.contents.map((k) => ITEMS[k].emoji).join(' ')}`;
+    if (!h.contents.length) return '🍽️ Clean plate';
+    const d = matchDish(h.contents);
+    return d ? `Plate: ${d.recipe.emoji} ${d.recipe.name}${d.spicy ? ' 🌶️' : ''}` : `Plate: ${h.contents.map((k) => ITEMS[k].emoji).join(' ')}`;
   }
   const d = ITEMS[h.kind];
   return `${d.emoji}${d.tag || ''} ${d.name}`;
@@ -173,25 +212,34 @@ const setHTML = (el, html) => {
 function tutorialHint() {
   const g = game;
   const h = g.hand;
-  const waiting = g.customers.filter((c) => c.state !== 'leaving');
-  const ordered = new Set(waiting.map((c) => c.recipe));
-  if (!waiting.length && !h) return 'Customers will line up at the pass (back). Watch the tickets up top!';
+  const waiting = g.customers.filter((c) => c.state !== 'leaving' && c.type !== 'inspector');
+  const plates = g.stationsOf('plate');
+  if (!waiting.length && !h) return 'Customers line up at the pass (back). Their orders show up as tickets.';
   if (!h) {
-    if (g.plates.some((p) => { const r = matchRecipe(p.contents); return r && ordered.has(r.id); })) return 'Plate complete! Tap it to pick it up.';
-    if (g.burners.some((b) => b.state === 'done')) return 'Ding! Tap the burner to grab it before it burns.';
-    if (g.boards.some((b) => b.item && ITEMS[b.item].chop)) return 'Keep tapping the board to chop 🔪';
-    if (g.boards.some((b) => b.item)) return 'Chopped! Tap the board to pick it up.';
-    return 'Check a ticket, then tap a crate (left) to grab an ingredient.';
+    if (plates.some((p) => p.plate && matchDish(p.plate.contents))) return 'Dish complete! Tap the plate to pick it up.';
+    if (g.stationsOf('burner').some((b) => b.state === 'done')) return 'Ding! Tap the burner to grab it before it burns.';
+    if (g.stationsOf('board').some((b) => b.item && ITEMS[b.item].chop)) return 'Tap the board again to chop 🔪';
+    if (g.stationsOf('board').some((b) => b.item)) return 'Chopped! Tap the board to pick it up.';
+    return 'Tap a crate to grab an ingredient. Taps queue up — you can tap several stations in a row!';
   }
-  if (h.kind === 'plate') return matchRecipe(h.contents) ? 'Tap the SERVE pass to hand it over!' : 'Not a full dish yet — set the plate back down and add more.';
-  if (h.kind === 'burnt') return 'Toss it in the trash 🗑️ (bottom right).';
-  if (h.kind === 'bread') return 'Toast it on a burner (right), or plate it as a burger bun.';
+  if (h.kind === 'plate') return matchDish(h.contents) ? 'Tap the SERVE pass to hand it over!' : 'Not a full dish yet — set the plate down on a counter.';
+  if (h.kind === 'burnt') return 'Toss it in the trash 🗑️.';
+  if (h.kind === 'bread') return 'Toast it on a burner 🔥 — or plate it as a burger bun.';
   if (h.kind === 'tomato_chopped') return 'Plate it for a salad, or cook it on a burner for soup.';
   const d = ITEMS[h.kind];
-  if (d.chop) return 'Tap a cutting board (front) to chop it.';
-  if (d.cook) return 'Tap a burner (right) to cook it.';
-  return 'Tap a plate (by the pass) to add it.';
+  if (d.chop) return 'Tap a cutting board 🔪 to chop it.';
+  if (d.cook) return 'Tap a burner 🔥 to cook it.';
+  if (d.fry) return 'Tap the fryer 🛢️.';
+  return 'Tap a plate counter 🍽️ to add it.';
 }
+
+const DAY_TIPS = {
+  [DISHES_DAY]: '🧽 New: served plates come back dirty to the sink. Tap the sink to scrub, then put the plate on an empty counter.',
+  5: '🛢️ New: the Deep Fryer (buy it in the Shop) fries cut potatoes and fish.',
+  6: '👥 New: groups order several dishes at once — serve them all for a big tip.',
+  [VEGGIE_DAY]: '🌱 New: veggie customers only order veg dishes.',
+  [SPICY_DAY]: '🌶️ New: chop a chili and add it to the plate for spicy orders (+$4).',
+};
 
 function updateHUD() {
   const g = game;
@@ -199,27 +247,32 @@ function updateHUD() {
   const t = $('hud-time');
   t.textContent = g.time > 0 ? `⏱ ${fmtTime(g.time)}` : 'Closing';
   t.classList.toggle('urgent', g.time > 0 && g.time < 15);
-  $('hud-money').textContent = `$${save.money}`;
+  $('hud-money').textContent = `$${Math.round(save.money)}`;
   $('hud-rating').textContent = `★ ${save.rating.toFixed(1)}`;
+  const ev = EVENTS[g.cfg.event];
+  const evEl = $('hud-event');
+  evEl.classList.toggle('hidden', g.cfg.event === 'regular');
+  evEl.className = `chip event ${g.cfg.event === 'regular' ? 'hidden' : ''}`;
+  evEl.textContent = `${ev.emoji} ${ev.name}${g.cfg.shortage ? ` · no ${ITEMS[g.cfg.shortage].emoji} deliveries` : ''}`;
   const goal = $('hud-goal');
-  goal.textContent = `Goal $${Math.max(0, g.stats.earned)}/${g.cfg.goal}`;
-  goal.classList.toggle('done', g.stats.earned >= g.cfg.goal);
+  goal.textContent = `🎯 $${Math.round(g.earned)}/${g.cfg.goal}`;
+  goal.classList.toggle('done', g.earned >= g.cfg.goal);
   const b = g.cfg.bonus;
   const bonus = $('hud-bonus');
-  bonus.textContent = `Bonus: ${Math.min(g.stats.bonusCount, b.count)}/${b.count} ${RECIPES[b.recipe].emoji} → +$${b.reward}`;
+  bonus.textContent = `Bonus ${Math.min(g.stats.bonusCount, b.count)}/${b.count} ${RECIPES[b.recipe].emoji} +$${b.reward}`;
   bonus.classList.toggle('done', g.stats.bonusCount >= b.count);
 
   const tickets = g.customers
-    .filter((c) => c.state !== 'leaving')
+    .filter((c) => c.state !== 'leaving' && c.type !== 'inspector')
     .sort((a, b2) => a.slot - b2.slot)
     .map((c) => {
-      const r = RECIPES[c.recipe];
       const type = CUSTOMERS[c.type];
       const color = `#${type.color.toString(16).padStart(6, '0')}`;
+      const next = c.orders.find((o) => !o.done);
       return `<div class="ticket" style="--c:${color}">
-        <div class="t-head"><span class="t-emoji">${r.emoji}</span>${r.name}</div>
-        <div class="t-type">${type.name}</div>
-        <div class="t-steps">${steps(r)}</div>
+        <div class="t-type">${c.veggie ? '🌱 ' : ''}${type.name}</div>
+        ${c.orders.map((o) => `<div class="t-order ${o.done ? 'done' : ''}">${RECIPES[o.recipe].emoji} ${RECIPES[o.recipe].name}${o.spicy ? ' 🌶️' : ''}</div>`).join('')}
+        ${next ? `<div class="t-steps">${steps(RECIPES[next.recipe])}${next.spicy ? ' + 🌶️🔪' : ''}</div>` : ''}
         ${bar(c.patience / c.max)}
       </div>`;
     })
@@ -228,104 +281,85 @@ function updateHUD() {
   setHTML($('hand'), handText(g.hand));
 
   const tut = $('tutorial');
-  const showTut = g.cfg.day <= 2;
+  const tip = introT > 0 ? DAY_TIPS[g.cfg.day] : null;
+  const showTut = g.cfg.day <= 2 || !!tip;
   tut.classList.toggle('hidden', !showTut);
-  if (showTut) setHTML(tut, `💡 ${tutorialHint()}`);
+  if (showTut) setHTML(tut, tip || `💡 ${tutorialHint()}`);
 }
 
 // ---------- screens ----------
 
+const SCREENS = ['screen-menu', 'screen-plan', 'screen-pause', 'screen-howto'];
 function show(screen) {
-  for (const id of ['screen-menu', 'screen-between', 'screen-pause', 'screen-howto']) {
-    $(id).classList.toggle('hidden', id !== screen);
-  }
+  for (const id of SCREENS) $(id).classList.toggle('hidden', id !== screen);
   $('hud').classList.toggle('hidden', !(mode === 'playing' || mode === 'paused'));
+  $('build-ui').classList.toggle('hidden', mode !== 'build');
+}
+
+function backdrop(s) {
+  const venue = VENUES[s.venue];
+  scene.setVenue(venue, { patio: s.venue === 'diner' && !!s.upgrades.patio });
+  scene.setLayout(vstate(s).layout);
+  scene.clearCustomers();
 }
 
 function showMenu() {
   mode = 'menu';
   game = null;
-  scene.reset();
+  backdrop(save || newSave());
   $('btn-continue').classList.toggle('hidden', !save);
   if (save) $('btn-continue').textContent = `Continue — Day ${save.day}`;
   show('screen-menu');
 }
 
-function showBetween(result) {
-  mode = 'between';
-  let html = '';
-  if (result) {
-    const stars = '★'.repeat(result.stars) + '☆'.repeat(3 - result.stars);
-    const finale = result.day === CAREER_DAYS
-      ? '<p><b>🎉 Career complete!</b> Your kitchen is a local legend. Free play continues with endless days.</p>'
-      : '';
-    html = `<h2>Day ${result.day} Complete</h2>
-      <div class="result-stars">${stars}</div>
-      ${finale}
-      <div class="result-grid">
-        <div>Earned<b>$${result.earned}</b></div>
-        <div>Goal<b>$${result.goal}</b></div>
-        <div>Served<b>${result.served}</b></div>
-        <div>Walk-outs<b>${result.lost}</b></div>
-        <div>Burnt<b>${result.burnt}</b></div>
-        <div>Rating<b>★ ${result.rating.toFixed(1)}</b></div>
-      </div>
-      ${result.bonusPaid ? `<p>Bonus goal hit: <b>+$${result.bonusPaid}</b></p>` : ''}`;
-  } else {
-    html = `<h2>Welcome back, Chef!</h2><p class="sub">Rating ★ ${save.rating.toFixed(1)} · Days starred: ${Object.values(save.stars).reduce((a, b) => a + b, 0)}★</p>`;
-  }
-  $('day-result').innerHTML = html;
-  renderShop();
-  const cfg = dayConfig(save.day, save.upgrades);
-  const news = dayNews(save.day);
-  $('next-day').innerHTML = `<b>Next: Day ${save.day}${cfg.freePlay ? ' (Free Play)' : ''}</b><br>
-    Goal $${cfg.goal} · ${Math.round(cfg.length)}s shift · ${cfg.seats} customer spots<br>
-    Menu: ${cfg.recipes.map((id) => RECIPES[id].emoji).join(' ')}
-    ${news.length ? '<br>' + news.map((n) => `✨ ${n}`).join('<br>') : ''}`;
-  $('btn-start').textContent = `Start Day ${save.day}`;
-  show('screen-between');
-}
-
-function renderShop() {
-  $('shop-money').textContent = `$${save.money}`;
-  $('shop').innerHTML = UPGRADES.map((u) => {
-    const lvl = save.upgrades[u.id] || 0;
-    const maxed = lvl >= u.costs.length;
-    const locked = save.day < u.unlock;
-    const cost = u.costs[lvl];
-    const btn = locked
-      ? `<button disabled>Day ${u.unlock}</button>`
-      : maxed
-        ? '<button disabled>MAX</button>'
-        : `<button data-buy="${u.id}" ${save.money < cost ? 'disabled' : ''}>$${cost}</button>`;
-    return `<div class="shop-item ${locked ? 'locked' : ''}">
-      <div class="info"><div class="name">${u.name}</div><div class="desc">${u.desc}</div>
-      <div class="lvl">${'■'.repeat(lvl)}${'□'.repeat(u.costs.length - lvl)}</div></div>${btn}</div>`;
-  }).join('');
-}
-
-$('shop').addEventListener('click', (e) => {
-  const id = e.target.dataset?.buy;
-  if (!id) return;
-  const u = UPGRADES.find((x) => x.id === id);
-  const lvl = save.upgrades[id] || 0;
-  const cost = u.costs[lvl];
-  if (cost == null || save.money < cost) return;
-  save.money -= cost;
-  save.upgrades[id] = lvl + 1;
-  writeSave(save);
-  sfx('cash');
-  renderShop();
+const planner = createPlanner({
+  getSave: () => save,
+  onOpen: () => startDay(),
+  onKitchen: () => enterBuild(),
+  onVenueChange: () => backdrop(save),
+  toast,
+  sfx,
 });
+
+const builder = createBuilder({
+  scene,
+  getSave: () => save,
+  toast,
+  sfx,
+  onDone: () => {
+    scene.setBuildMode(false);
+    openPlanner();
+  },
+});
+
+function openPlanner(tab) {
+  mode = 'plan';
+  game = null;
+  ensureCrates(save);
+  backdrop(save);
+  planner.show(tab);
+  show('screen-plan');
+}
+
+function enterBuild() {
+  mode = 'build';
+  backdrop(save);
+  scene.setBuildMode(true);
+  builder.enter();
+  show(null);
+}
 
 function startDay() {
   unlockAudio();
-  scene.reset();
+  backdrop(save);
   game = new Game(save, onGameEvent);
   game.startDay();
+  writeSave(save);
   mode = 'playing';
+  introT = 12;
   show(null);
-  popScreen(`Day ${save.day} — Open for business!`, 'good');
+  const ev = EVENTS[game.cfg.event];
+  popScreen(game.cfg.event === 'regular' ? `Day ${save.day} — Open for business!` : `${ev.emoji} ${ev.name}!`, 'good');
 }
 
 function pause(bookOnly = false) {
@@ -333,11 +367,12 @@ function pause(bookOnly = false) {
   mode = 'paused';
   $('pause-title').textContent = bookOnly ? 'Recipe Book' : 'Paused';
   $('book').innerHTML = RECIPE_LIST.map((r) => {
-    const locked = r.unlock > save.day;
-    return `<div class="recipe ${locked ? 'locked' : ''}">
-      <div class="r-name">${r.emoji} ${r.name} <span style="float:right">$${r.price}</span></div>
-      <div class="r-steps">${locked ? `Unlocks on day ${r.unlock}` : steps(r)}</div></div>`;
-  }).join('') + '<div class="recipe"><div class="r-steps">🔪 = chop on a board · 🔥 = cook on a burner · then plate &amp; serve</div></div>';
+    const known = save.known.includes(r.id);
+    const onMenu = save.menu.some((m) => m.id === r.id);
+    return `<div class="recipe ${known ? '' : 'locked'}">
+      <div class="r-name">${r.emoji} ${r.name} ${r.veg ? '🌱' : ''}${onMenu ? ' <span class="pill good">on menu</span>' : ''}<span style="float:right">$${r.price}</span></div>
+      <div class="r-steps">${known ? steps(r) : `Learn it in the planner (day ${r.unlock}+)`}</div></div>`;
+  }).join('') + '<div class="recipe"><div class="r-steps">🔪 chop on a board · 🔥 cook on a burner · 🛢️ fry in the fryer · 🌶️ add chopped chili for spicy</div></div>';
   show('screen-pause');
 }
 function resume() {
@@ -350,18 +385,16 @@ $('btn-new').addEventListener('click', () => {
   if (save && !confirm('Start a new game? Your current progress will be replaced.')) return;
   save = newSave();
   writeSave(save);
-  startDay();
+  openPlanner('plan');
 });
-$('btn-continue').addEventListener('click', () => showBetween(null));
+$('btn-continue').addEventListener('click', () => openPlanner('plan'));
 $('btn-howto').addEventListener('click', () => show('screen-howto'));
-$('btn-howto-close').addEventListener('click', () => show('screen-menu'));
-$('btn-start').addEventListener('click', startDay);
-$('btn-menu').addEventListener('click', showMenu);
+$('btn-howto-close').addEventListener('click', () => show(mode === 'menu' ? 'screen-menu' : null));
 $('btn-pause').addEventListener('click', () => pause(false));
 $('btn-book').addEventListener('click', () => pause(true));
 $('btn-resume').addEventListener('click', resume);
 $('btn-quit').addEventListener('click', () => {
-  // Quitting mid-day forfeits that day; money earned so far is kept.
+  // Quitting mid-day forfeits the rest of the shift; money earned so far is kept.
   writeSave(save);
   showMenu();
 });
@@ -377,10 +410,15 @@ let last = performance.now();
 function frame(now) {
   const dt = Math.min(0.05, (now - last) / 1000);
   last = now;
-  if (mode === 'playing' && game) game.update(dt);
-  if (game) {
+  if (mode === 'playing' && game) {
+    game.update(dt);
+    introT = Math.max(0, introT - dt);
+  }
+  if (game && (mode === 'playing' || mode === 'paused')) {
     scene.sync(game, mode === 'playing' ? dt : 0);
-    if (mode === 'playing' || mode === 'paused') updateHUD();
+    updateHUD();
+  } else if (mode === 'build') {
+    scene.syncBuild(dt);
   } else {
     scene.idle(dt);
   }

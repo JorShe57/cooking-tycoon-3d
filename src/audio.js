@@ -49,6 +49,12 @@ const SOUNDS = {
   cash: () => { tone(880, 0.1, { type: 'square', vol: 0.05 }); tone(1320, 0.18, { type: 'square', vol: 0.05, delay: 0.08 }); },
   fail: () => tone(220, 0.35, { type: 'sawtooth', vol: 0.07, slide: -100 }),
   trash: () => noise(0.15, 0.1),
+  tap: () => tone(700, 0.04, { type: 'triangle', vol: 0.04 }),
+  fry: () => { noise(0.5, 0.06); tone(160, 0.2, { type: 'sine', vol: 0.03 }); },
+  wash: () => { noise(0.12, 0.05); tone(600, 0.08, { type: 'sine', vol: 0.03, slide: 300 }); },
+  whistle: () => { tone(1500, 0.15, { vol: 0.06 }); tone(1200, 0.2, { vol: 0.06, delay: 0.16 }); },
+  buy: () => { tone(660, 0.07, { type: 'square', vol: 0.04 }); tone(990, 0.12, { type: 'square', vol: 0.04, delay: 0.06 }); },
+  error: () => tone(200, 0.12, { type: 'square', vol: 0.05 }),
 };
 
 export function sfx(name) {

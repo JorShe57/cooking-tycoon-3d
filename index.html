@@ -16,6 +16,7 @@
     <div id="labels"></div>
     <div id="popups"></div>
 
+    <!-- In-shift HUD -->
     <div id="hud" class="hidden">
       <div class="topbar">
         <div class="stat" id="hud-day">Day 1</div>
@@ -24,6 +25,7 @@
         <div class="stat" id="hud-rating">★ 3.0</div>
       </div>
       <div class="subbar">
+        <div id="hud-event" class="chip"></div>
         <div id="hud-goal" class="chip"></div>
         <div id="hud-bonus" class="chip"></div>
       </div>
@@ -36,25 +38,45 @@
       </div>
     </div>
 
+    <!-- Kitchen editor -->
+    <div id="build-ui" class="hidden">
+      <div class="build-top">
+        <div class="build-title">🛠 Edit Kitchen</div>
+        <div id="build-hint">Tap a station to pick it up, then tap an empty tile to move it.</div>
+      </div>
+      <div class="build-bottom">
+        <div id="build-palette"></div>
+        <div class="build-actions">
+          <button id="btn-store" class="btn small" disabled>📥 Store</button>
+          <button id="btn-build-done" class="btn small primary">✓ Done</button>
+        </div>
+      </div>
+    </div>
+
     <div id="screen-menu" class="screen">
       <div class="panel">
         <div class="logo">🍳</div>
         <h1>Cooking Tycoon 3D</h1>
-        <p class="sub">Grow a tiny kitchen into a busy restaurant.</p>
+        <p class="sub">Grow a tiny kitchen into a legendary restaurant.</p>
         <button id="btn-continue" class="btn primary hidden">Continue</button>
         <button id="btn-new" class="btn">New Game</button>
         <button id="btn-howto" class="btn ghost">How to Play</button>
       </div>
     </div>
 
-    <div id="screen-between" class="screen hidden">
-      <div class="panel wide">
-        <div id="day-result"></div>
-        <h2>Upgrade Shop <span id="shop-money" class="money"></span></h2>
-        <div id="shop"></div>
-        <div id="next-day"></div>
-        <button id="btn-start" class="btn primary">Start Day</button>
-        <button id="btn-menu" class="btn ghost">Main Menu</button>
+    <!-- Between-day planner -->
+    <div id="screen-plan" class="screen planner-screen hidden">
+      <div class="panel planner">
+        <div class="plan-head">
+          <div id="plan-title">Day 1</div>
+          <div id="plan-money" class="money"></div>
+        </div>
+        <div id="plan-tabs"></div>
+        <div id="plan-body"></div>
+        <div class="plan-foot">
+          <button id="btn-kitchen" class="btn small">🛠 Kitchen</button>
+          <button id="btn-open" class="btn primary">Open Day</button>
+        </div>
       </div>
     </div>
 
@@ -71,14 +93,15 @@
       <div class="panel wide">
         <h2>How to Play</h2>
         <ol class="howto">
-          <li>Customers line up at the <b>pass</b> (back counter) with an order.</li>
-          <li>Tap a <b>crate</b> to grab an ingredient. You can carry one thing at a time.</li>
-          <li>Tap a <b>cutting board</b> to drop lettuce/tomato, then tap again to chop 🔪.</li>
-          <li>Put bread, patties or diced tomato on a <b>burner</b> 🔥. Grab it when it dings — before it burns!</li>
-          <li>Tap a <b>plate</b> to add food. Tap it with empty hands to pick the plate up.</li>
-          <li>Tap the <b>pass</b> to serve. Faster service = bigger tips.</li>
-          <li>Mistakes go in the <b>trash</b> 🗑️ (−$2).</li>
-          <li>Between days, spend cash on upgrades. Finish 10 career days!</li>
+          <li><b>Plan</b> each day: choose the menu and prices, buy ingredients, pick the day's event, hire staff.</li>
+          <li>Customers line up at the <b>pass</b> (back counter). Their tickets show what to make.</li>
+          <li>Tap stations to send your chef there — taps queue up, so plan your route!</li>
+          <li><b>Crates</b> give ingredients (uses stock; if empty you pay 3× for a rush delivery).</li>
+          <li><b>Boards</b> 🔪 chop, <b>burners</b> 🔥 cook, <b>fryers</b> 🛢️ fry. Grab food before it burns!</li>
+          <li>Add food to a <b>plate</b>, pick the plate up, tap the pass to serve. Faster = bigger tips.</li>
+          <li>From day 3 plates come back dirty — scrub them at the <b>sink</b> 🧽.</li>
+          <li>Use <b>🛠 Kitchen</b> to buy and rearrange stations. Short walks = faster service.</li>
+          <li>Grow your rank, finish milestones and weekly challenges, and open a Food Truck!</li>
         </ol>
         <button id="btn-howto-close" class="btn primary">Got it</button>
       </div>
